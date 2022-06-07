@@ -1,6 +1,6 @@
 from unittest import TestCase
 
-from src.gsqlite3 import connect
+from src.gsqlite import connect
 
 
 class TestCursor(TestCase):

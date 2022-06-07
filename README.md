@@ -1,11 +1,11 @@
-# gsqlite3
+# gsqlite
 
 ## Abstract
 DBAPI 2.0 implementation for sqlite3.
 
 ## Example
 ```python3
->>> from gsqlite3 import connect
+>>> from gsqlite import connect
 >>> conn = connect(":memory:")  # createing in-memory database
 >>> cursor = conn.cursor()  # getting the cursor
 >>> cursor.execute("CREATE TABLE users (id, email)")  # create `users` table
