@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 TElem = Union[int, float, str, bytes, None]
 TRow = Sequence[TElem]
 TParams = Sequence[TElem]
+TColDesc = Tuple[str, None, None, None, None, None, None]
 
 
 def bind_param(
@@ -104,11 +105,10 @@ class Cursor(Iterator[TRow]):
         self.connection = connection
         self.row_iter = iter(self)
 
-    __column_count = None
-    __description = None
+    __description: Optional[Sequence[TColDesc]] = None
 
     @property
-    def description(self) -> Sequence[Tuple[str, None, None, None, None, None, None]]:
+    def description(self) -> Sequence[TColDesc]:
         """
         Read-only attribute provides column names for
         the last query. If no query was executed or operation
@@ -119,19 +119,41 @@ class Cursor(Iterator[TRow]):
         """
         return self.__description
 
-    def __load_description(self):
-        if not self.__column_count:
+    def __update_description(self, operation: str):
+        column_count = libsqlite3.sqlite3_column_count(
+            self.statement
+        )
+
+        if column_count == 0:
             self.__description = None
             return
 
         column_names = (
             libsqlite3.sqlite3_column_name(self.statement, n).decode("utf-8")
-            for n in range(self.__column_count)
+            for n in range(column_count)
         )
 
         self.__description = tuple(
             (name, None, None, None, None, None, None)
             for name in column_names
+        )
+
+    __lastrowid = None
+
+    @property
+    def lastrowid(self):
+        return self.__lastrowid
+
+    def __update_lastrowid(self, operation: str):
+        assert operation
+        command = operation.split()[0].upper()
+
+        if command not in ["INSERT", "REPLACE"]:
+            self.__lastrowid = None
+            return
+
+        self.__lastrowid = libsqlite3.sqlite3_last_insert_rowid(
+            self.connection.db,
         )
 
     @functools.lru_cache()
@@ -158,7 +180,7 @@ class Cursor(Iterator[TRow]):
         self.last_step_rc = libsqlite3.sqlite3_step(self.statement)
         return row
 
-    def execute(self, operation, params: TParams = ()):
+    def execute(self, operation: str, params: TParams = ()):
         self.__not_closed_guard()
         self.__prepare(operation)
 
@@ -167,6 +189,8 @@ class Cursor(Iterator[TRow]):
 
         self.last_step_rc = libsqlite3.sqlite3_step(self.statement)
         self.row_iter = iter(self)
+
+        self.__update_lastrowid(operation)
 
     def executemany(self, operation: str, seq_of_params: Sequence[TParams] = []):
         self.__not_closed_guard()
@@ -177,6 +201,7 @@ class Cursor(Iterator[TRow]):
                 bind_param(self.statement, index, value)
 
             self.last_step_rc = libsqlite3.sqlite3_step(self.statement)
+            self.__update_lastrowid(operation)
             libsqlite3.sqlite3_reset(self.statement)
 
         self.row_iter = iter(self)
@@ -227,10 +252,7 @@ class Cursor(Iterator[TRow]):
         )
         sqlite3_rc_guard(rc)
 
-        self.__column_count = libsqlite3.sqlite3_column_count(
-            self.statement
-        )
-        self.__load_description()
+        self.__update_description(operation)
 
     def __finalize(self) -> None:
         self.last_step_rc = None
