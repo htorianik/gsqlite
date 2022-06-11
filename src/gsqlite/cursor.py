@@ -104,6 +104,36 @@ class Cursor(Iterator[TRow]):
         self.connection = connection
         self.row_iter = iter(self)
 
+    __column_count = None
+    __description = None
+
+    @property
+    def description(self) -> Sequence[Tuple[str, None, None, None, None, None, None]]:
+        """
+        Read-only attribute provides column names for
+        the last query. If no query was executed or operation
+        didn't retur any row then the value is `None`.
+
+        For every column it returns 7-row tuple where the
+        first element is a name and the last 6 are empty.
+        """
+        return self.__description
+
+    def __load_description(self):
+        if not self.__column_count:
+            self.__description = None
+            return
+
+        column_names = (
+            libsqlite3.sqlite3_column_name(self.statement, n).decode("utf-8")
+            for n in range(self.__column_count)
+        )
+
+        self.__description = tuple(
+            (name, None, None, None, None, None, None)
+            for name in column_names
+        )
+
     @functools.lru_cache()
     def n_columns(self) -> int:
         return libsqlite3.sqlite3_data_count(self.statement)
@@ -196,6 +226,11 @@ class Cursor(Iterator[TRow]):
             ctypes.byref(ctypes.c_void_p()),
         )
         sqlite3_rc_guard(rc)
+
+        self.__column_count = libsqlite3.sqlite3_column_count(
+            self.statement
+        )
+        self.__load_description()
 
     def __finalize(self) -> None:
         self.last_step_rc = None
