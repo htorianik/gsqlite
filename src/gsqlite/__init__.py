@@ -1,6 +1,7 @@
 import logging
 
 from .connection import connect
+from .exceptions import *
 
 
 def get_version() -> str:
