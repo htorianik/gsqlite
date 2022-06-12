@@ -8,6 +8,7 @@ from typing import Tuple, Optional, Sequence, Union, TypeVar, List, Iterator
 
 from .utils import sqlite3_rc_guard
 from .c_sqlite3 import libsqlite3
+from .exceptions import ProgrammingError
 from .constants import (
     SQLITE3_TEXT,
     SQLITE_BLOB,
@@ -99,13 +100,19 @@ class Cursor(Iterator[TRow]):
     last_step_rc: Optional[int] = None
     row_iter: Iterator[TRow]
 
+    __connection: "Connection"
+    __description: Optional[Sequence[TColDesc]] = None
+    __lastrowid: Optional[int] = None
+
     arraysize: int = 1
 
     def __init__(self, connection: "Connection"):
-        self.connection = connection
+        self.__connection = connection
         self.row_iter = iter(self)
 
-    __description: Optional[Sequence[TColDesc]] = None
+    @property
+    def connection(self) -> "Connection":
+        return self.__connection
 
     @property
     def description(self) -> Sequence[TColDesc]:
@@ -118,6 +125,16 @@ class Cursor(Iterator[TRow]):
         first element is a name and the last 6 are empty.
         """
         return self.__description
+
+    @property
+    def lastrowid(self):
+        """
+        Read-only attribute provides last id of the
+        last inserted row after INSERT or REPLACE
+        command. Execution of any other command will result
+        in setting this attribute to `None`. Initial is `None`.
+        """
+        return self.__lastrowid
 
     def __update_description(self, operation: str):
         column_count = libsqlite3.sqlite3_column_count(
@@ -137,12 +154,6 @@ class Cursor(Iterator[TRow]):
             (name, None, None, None, None, None, None)
             for name in column_names
         )
-
-    __lastrowid = None
-
-    @property
-    def lastrowid(self):
-        return self.__lastrowid
 
     def __update_lastrowid(self, operation: str):
         assert operation
@@ -235,10 +246,10 @@ class Cursor(Iterator[TRow]):
         self.closed = True
 
     def __not_closed_guard(self) -> None:
-        if self.connection.closed:
-            raise Exception("Connection is closed")
-        if self.closed:
-            raise Exception("Cursor is closed")
+        if self.connection.closed or self.closed:
+            raise ProgrammingError(
+                "Cannot operate on a closed database."
+            )
 
     def __prepare(self, operation: str):
         self.__finalize()

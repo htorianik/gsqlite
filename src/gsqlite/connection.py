@@ -4,6 +4,7 @@ from .cursor import Cursor
 from .utils import sqlite3_rc_guard
 from .c_sqlite3 import libsqlite3
 from .constants import SQLITE_OPEN_READWRITE
+from .exceptions import ProgrammingError
 
 
 class Connection:
@@ -40,7 +41,9 @@ class Connection:
 
     def __not_closed_guard(self):
         if self.closed:
-            raise Exception("Connection is closed")
+            raise ProgrammingError(
+                "Cannot operate on a closed database."
+            )
 
 
 def connect(dbpath: str = ":memory:") -> Connection:

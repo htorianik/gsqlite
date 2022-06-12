@@ -1,7 +1,10 @@
 from unittest import TestCase
 from unittest.mock import ANY
+from contextlib import contextmanager
 
-from src.gsqlite import connect
+from .utils import call_method
+
+from src.gsqlite import connect, ProgrammingError
 
 
 def cursor_fixture(self):
@@ -135,3 +138,55 @@ class TestCursorLastrowid(TestCase):
         )
         self.cursor.execute("SELECT * FROM users")
         self.assertIsNone(self.cursor.lastrowid)
+
+
+class TestCursorConnection(TestCase):
+
+    CURSOR_PUBLIC_METHODS = (
+        "execute",
+        "executemany",
+        "fetchone",
+        "fetchmany",
+        "fetchall",
+    )
+
+    CONNECTION_PUBLIC_METHOD = (
+        "commit",
+        "rollback",
+        "cursor",
+        "close",
+    )
+
+    def setUp(self):
+        self.conn = connect(":memory:")
+        self.cursor1 = self.conn.cursor()
+        self.cursor2 = self.conn.cursor()
+
+    def test_conn_read_only(self):
+        with self.assertRaises(AttributeError):
+            self.cursor1.connection = None
+
+    def test_close_conn(self):
+        self.conn.close()
+        for public_method in self.CONNECTION_PUBLIC_METHOD:
+            with self.assertRaisesProgrammingClosedError():
+                call_method(self.conn, public_method)
+
+    def test_close_cursor(self):
+        self.cursor1.close()
+        with self.assertRaisesProgrammingClosedError():
+            self.cursor1.execute("SELECT 1")
+
+        self.cursor2.execute("SELECT 2")
+        self.conn.cursor()
+
+    @contextmanager
+    def assertRaisesProgrammingClosedError(self):
+        try:
+            yield
+        except ProgrammingError as exc:
+            self.assertTrue(
+                "Cannot operate on a closed database." in str(exc)
+            )
+        else:
+            assert False, "statement doesn't raise a ProgrammingError"
