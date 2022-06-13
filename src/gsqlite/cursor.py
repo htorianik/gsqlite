@@ -3,10 +3,11 @@ import pathlib
 import logging
 import itertools
 import functools
+import dataclasses
 
-from typing import Tuple, Optional, Sequence, Union, TypeVar, List, Iterator
+from typing import Tuple, Optional, Sequence, Union, TypeVar, List, Iterator, Iterable, Callable
 
-from .utils import sqlite3_rc_guard
+from .utils import sqlite3_rc_guard, sqlite3_call, is_dql_opreation, is_dml_operation
 from .c_sqlite3 import libsqlite3
 from .lastrowid import LastrowidMixin
 from .exceptions import ProgrammingError
@@ -93,135 +94,193 @@ def get_column(statement: ctypes.c_void_p, index: int) -> TElem:
     raise NotImplementedError()
 
 
-class Cursor(
-    Iterator[TRow],
-    LastrowidMixin,
-    DescriptionMixin,
-):
+class CursorIterator(Iterator[TRow]):
+    """
+    Class responsible for executing prepared SQL statement with binded
+    parameters and then fetching results.
+    """
 
-    closed: bool = False
-    connection: "Connection"
-    statement: Optional[ctypes.c_void_p] = None
-    last_step_rc: Optional[int] = None
-    row_iter: Iterator[TRow]
+    __statement: ctypes.c_void_p
+    __prev_step_rc: int
+    __data_count: int
+
+    def __init__(
+        self, 
+        statement: ctypes.c_void_p,
+        prev_step_rc: int,
+    ):
+        self.__statement = statement
+        self.__prev_step_rc = prev_step_rc
+        self.__data_count = libsqlite3.sqlite3_data_count(self.__statement)
+
+    @classmethod
+    def exec_and_iter(cls, statement: ctypes.c_void_p) -> "CursorIterator":
+        prev_step_rc = sqlite3_call(libsqlite3.sqlite3_step, statement)
+        return cls(statement, prev_step_rc)
+
+    def __next__(self) -> TRow:
+        if self.__prev_step_rc == SQLITE_DONE:
+            raise StopIteration()
+
+        row = tuple(
+            get_column(self.__statement, index)
+            for index in range(self.__data_count)
+        )
+        self.__prev_step_rc = sqlite3_call(
+            libsqlite3.sqlite3_step, 
+            self.__statement,
+        )
+        return row
+
+
+
+TPostExecutionHook = Callable[
+    [
+        "Connection", 
+        ctypes.c_void_p, 
+        str,
+    ], 
+    None,
+]
+
+
+class CursorExecutionLayer(Iterable[TRow]):
 
     __connection: "Connection"
-
-    arraysize: int = 1
+    __statement: Optional[ctypes.c_void_p] = None
+    __operation: Optional[str] = None
+    __iterator: Optional[Iterator[TRow]] = None
+    __post_execution_hooks: List[TPostExecutionHook]
 
     def __init__(self, connection: "Connection"):
         self.__connection = connection
-        self.row_iter = iter(self)
+        self.__post_execution_hooks = []
 
     @property
-    def connection(self) -> "Connection":
+    def connection(self):
         return self.__connection
 
-    @functools.lru_cache()
-    def n_columns(self) -> int:
-        return libsqlite3.sqlite3_data_count(self.statement)
-
-    def __iter__(self) -> Iterator[TRow]:
-        self.n_columns.cache_clear()
-        return self
-
-    def __next__(self) -> TRow:
-
-        if self.last_step_rc == None or self.statement == None:
-            raise StopIteration()
-
-        if self.last_step_rc == SQLITE_DONE:
-            self.__finalize()
-            raise StopIteration
-
-        row = tuple(
-            get_column(self.statement, index) for index in range(self.n_columns())
-        )
-
-        self.last_step_rc = libsqlite3.sqlite3_step(self.statement)
-        return row
-
     def execute(self, operation: str, params: TParams = ()):
-        self.__not_closed_guard()
         self.__prepare(operation)
-
-        for (index, value) in enumerate(params, 1):
-            bind_param(self.statement, index, value)
-
-        self.last_step_rc = libsqlite3.sqlite3_step(self.statement)
-        self.row_iter = iter(self)
-
-        self._update_lastrowid(self.connection, self.statement, operation)
+        self.__bind(params)
+        self.__iterator = CursorIterator.exec_and_iter(self.__statement)
+        self.__call_hooks()
 
     def executemany(self, operation: str, seq_of_params: Sequence[TParams] = []):
-        self.__not_closed_guard()
+        if not is_dml_operation(operation):
+            raise ProgrammingError("executemany() can only execute DML statements.")
+
         self.__prepare(operation)
-
         for params in seq_of_params:
-            for (index, value) in enumerate(params, 1):
-                bind_param(self.statement, index, value)
+            self.__bind(params)
+            sqlite3_call(libsqlite3.sqlite3_step, self.__statement)
+            sqlite3_call(libsqlite3.sqlite3_reset, self.__statement)
 
-            self.last_step_rc = libsqlite3.sqlite3_step(self.statement)
-            self._update_lastrowid(self.connection, self.statement, operation)
-            libsqlite3.sqlite3_reset(self.statement)
+        self.__iterator = None
+        self.__call_hooks()
 
-        self.row_iter = iter(self)
+    def close(self, operation: str):
+        pass
+
+    def __iter__(self) -> Iterator[TRow]:
+        if not self.__iterator:
+            return iter([])
+
+        return self.__iterator
+
+    def _register_hook(self, hook: TPostExecutionHook):
+        self.__post_execution_hooks.append(hook)
+
+    def __call_hooks(self):
+        for hook in self.__post_execution_hooks:
+            hook(
+                self.__connection,
+                self.__statement,
+                self.__operation,
+            )
+
+    def __bind(self, params: TParams = ()):
+        for (index, value) in enumerate(params, 1):
+            bind_param(self.__statement, index, value)
+
+    def __prepare(self, statement: str):
+        self.__finalize()
+        self.__operation = statement
+        self.__statement = ctypes.c_void_p()
+        sqlite3_call(
+            libsqlite3.sqlite3_prepare_v2,
+            self.__connection.db,
+            self.__operation.encode(),
+            -1,
+            ctypes.byref(self.__statement),
+            ctypes.byref(ctypes.c_void_p()),
+        )
+
+    def __reset(self):
+        self.__iterator = None
+        sqlite3_call(
+            libsqlite3.sqlite3_reset,
+            self.__statement,
+        )
+
+    def __finalize(self) -> None:
+        self.__iterator = None
+        if self.__statement:
+            sqlite3_call(
+                libsqlite3.sqlite3_finalize,
+                self.__statement,
+            )
+            self.__statement = None
+
+
+class CursorFetchLayer(CursorExecutionLayer):
+
+    __arraysize: int = 1
+
+    @property
+    def arraysize(self) -> int:
+        return self.__arraysize
+
+    @arraysize.setter
+    def arraysize(self, value: int):
+        if not isinstance(value, int):
+            raise TypeError("Attribute arraysize must be int.")
+
+        if value < 1:
+            raise ValueError("Attribute arraysize must be 1 or more.")
+
+        self.__arraysize = value
 
     def fetchone(self) -> Optional[TRow]:
-        self.__not_closed_guard()
         try:
-            return next(self.row_iter)
+            return next(iter(self))
         except StopIteration:
             return None
 
     def fetchmany(self, size: Optional[int] = None) -> List[TRow]:
-        self.__not_closed_guard()
-        return list(itertools.islice(self.row_iter, size or self.arraysize))
+        return list(
+            itertools.islice(
+                iter(self), size or self.arraysize
+            )
+        )
 
     def fetchall(self) -> List[TRow]:
-        self.__not_closed_guard()
-        return list(self.row_iter)
+        return list(iter(self))
 
-    def setinputsize(self):
-        pass
 
-    def setoutputsize(self):
-        pass
+class Cursor(
+    CursorFetchLayer,
+    DescriptionMixin,
+    LastrowidMixin,
+):
 
-    @property
-    def rowcount(self) -> int:
-        return -1
+    def __init__(self, connection: "Connection"):
+        super().__init__(connection)
 
-    def close(self):
-        self.closed = True
-        self.__finalize()
-
-    def __not_closed_guard(self) -> None:
-        if self.connection.closed or self.closed:
-            raise ProgrammingError(
-                "Cannot operate on a closed database."
-            )
-
-    def __prepare(self, operation: str):
-        self.__finalize()
-        self.statement = ctypes.c_void_p()
-        rc = libsqlite3.sqlite3_prepare_v2(
-            self.connection.db,
-            operation.encode(),
-            -1,
-            ctypes.byref(self.statement),
-            ctypes.byref(ctypes.c_void_p()),
+        post_exec_hooks = (
+            self._update_description,
+            self._update_lastrowid,
         )
-        sqlite3_rc_guard(rc)
 
-        self._update_description(self.connection, self.statement, operation)
-
-    def __finalize(self) -> None:
-        self.last_step_rc = None
-        self.row_iter = iter(self)
-
-        if not self.statement:
-            return
-
-        libsqlite3.sqlite3_finalize(self.statement)
-        self.statement = None
+        for hook in post_exec_hooks:
+            self._register_hook(hook)

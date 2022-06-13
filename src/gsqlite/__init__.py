@@ -8,7 +8,8 @@ def get_version() -> str:
     conn = connect(":memory:")
     cursor = conn.cursor()
     cursor.execute("select sqlite_version()")
-    return cursor.fetchone()[0]
+    return "0.0.0"
+    # return cursor.fetchone()[0]
 
 
 apilevel = "2.0"
