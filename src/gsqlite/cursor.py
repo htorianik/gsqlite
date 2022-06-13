@@ -8,6 +8,7 @@ from typing import Tuple, Optional, Sequence, Union, TypeVar, List, Iterator
 
 from .utils import sqlite3_rc_guard
 from .c_sqlite3 import libsqlite3
+from .lastrowid import LastrowidMixin
 from .exceptions import ProgrammingError
 from .description import DescriptionMixin
 from .constants import (
@@ -94,6 +95,7 @@ def get_column(statement: ctypes.c_void_p, index: int) -> TElem:
 
 class Cursor(
     Iterator[TRow],
+    LastrowidMixin,
     DescriptionMixin,
 ):
 
@@ -104,7 +106,6 @@ class Cursor(
     row_iter: Iterator[TRow]
 
     __connection: "Connection"
-    __lastrowid: Optional[int] = None
 
     arraysize: int = 1
 
@@ -115,28 +116,6 @@ class Cursor(
     @property
     def connection(self) -> "Connection":
         return self.__connection
-
-    @property
-    def lastrowid(self):
-        """
-        Read-only attribute provides last id of the
-        last inserted row after INSERT or REPLACE
-        command. Execution of any other command will result
-        in setting this attribute to `None`. Initial is `None`.
-        """
-        return self.__lastrowid
-
-    def __update_lastrowid(self, operation: str):
-        assert operation
-        command = operation.split()[0].upper()
-
-        if command not in ["INSERT", "REPLACE"]:
-            self.__lastrowid = None
-            return
-
-        self.__lastrowid = libsqlite3.sqlite3_last_insert_rowid(
-            self.connection.db,
-        )
 
     @functools.lru_cache()
     def n_columns(self) -> int:
@@ -172,7 +151,7 @@ class Cursor(
         self.last_step_rc = libsqlite3.sqlite3_step(self.statement)
         self.row_iter = iter(self)
 
-        self.__update_lastrowid(operation)
+        self._update_lastrowid(self.connection, self.statement, operation)
 
     def executemany(self, operation: str, seq_of_params: Sequence[TParams] = []):
         self.__not_closed_guard()
@@ -183,7 +162,7 @@ class Cursor(
                 bind_param(self.statement, index, value)
 
             self.last_step_rc = libsqlite3.sqlite3_step(self.statement)
-            self.__update_lastrowid(operation)
+            self._update_lastrowid(self.connection, self.statement, operation)
             libsqlite3.sqlite3_reset(self.statement)
 
         self.row_iter = iter(self)
@@ -215,6 +194,7 @@ class Cursor(
 
     def close(self):
         self.closed = True
+        self.__finalize()
 
     def __not_closed_guard(self) -> None:
         if self.connection.closed or self.closed:
@@ -234,7 +214,7 @@ class Cursor(
         )
         sqlite3_rc_guard(rc)
 
-        self._update_description(self.statement, operation)
+        self._update_description(self.connection, self.statement, operation)
 
     def __finalize(self) -> None:
         self.last_step_rc = None

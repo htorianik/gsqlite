@@ -32,6 +32,7 @@ class DescriptionMixin:
 
     def _update_description(
         self,
+        connection: "Connection",
         statement: ctypes.c_void_p,
         operation: str,
     ):
@@ -39,8 +40,9 @@ class DescriptionMixin:
         Protected method to call when description may change
         e.g. after sqlite3_prepare() on SELECT operation.
 
-        :param statement: Pointer to a prepared statement.
-        :param operation: String with prepared SQL query.
+        :param connection: Connection where the statement was executed.
+        :param statement: Executed statement.
+        :param operation: SQL statement that was executed.
         """
         if not is_dql_opreation(operation):
             self.__description = None
