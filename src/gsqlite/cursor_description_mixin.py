@@ -1,6 +1,5 @@
 """
-Module provides mixin to expose `Cursor.description`
-propery of dbapi 2.0 spec.
+Implements `CursorDesciprionMixin` class.
 """
 
 import ctypes
@@ -14,7 +13,15 @@ TDescriptionColumn = Tuple[str, None, None, None, None, None, None]
 TDescription = Sequence[TDescriptionColumn]
 
 
-class DescriptionMixin:
+class CursorDescriptionMixin:
+    """
+    Exposes `description` attribute specified by dbapi 2.0.
+
+    Can be used as an extension to a subclass of
+    `cursor_execution_layer.CursorExecutionLayer` by 
+    defining subclass of it with this mixin and registering
+    `_update_description` with `CursorExecutionLayer_register_hook`.
+    """
 
     __description: Optional[TDescription] = None
 

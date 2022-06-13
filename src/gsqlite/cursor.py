@@ -1,12 +1,12 @@
-from .lastrowid import LastrowidMixin
-from .description import DescriptionMixin
+from .cursor_lastrowid_mixin import CursorLastrowidMixin
+from .cursor_description_mixin import CursorDescriptionMixin
 from .cursor_fetching_layer import CursorFetchingLayer
 
 
 class Cursor(
     CursorFetchingLayer,
-    DescriptionMixin,
-    LastrowidMixin,
+    CursorDescriptionMixin,
+    CursorLastrowidMixin,
 ):
     def __init__(self, connection: "Connection"):
         super().__init__(connection)

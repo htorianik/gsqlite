@@ -1,6 +1,5 @@
 """
-Module provides mixin to expose `Cursor.lastrowid`
-propery of dbapi 2.0 spec.
+Implements `CursorLastrowidMixin` class.
 """
 
 import ctypes
@@ -10,7 +9,15 @@ from .utils import get_operation_command
 from .c_sqlite3 import libsqlite3
 
 
-class LastrowidMixin:
+class CursorLastrowidMixin:
+    """
+    Exposes `lastrowid` attribute specified by dbapi 2.0.
+
+    Can be used as an extension to a subclass of
+    `cursor_execution_layer.CursorExecutionLayer` by 
+    defining subclass of it with this mixin and registering
+    `_update_lastrowid` with `CursorExecutionLayer_register_hook`.
+    """
 
     __lastrowid: Optional[int] = None
 

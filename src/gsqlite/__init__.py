@@ -1,5 +1,3 @@
-import logging
-
 from .connection import connect
 from .exceptions import *
 
@@ -17,6 +15,3 @@ threadsafety = 1
 paramstyle = "qmark"
 sqlite_version = get_version()
 sqlite_version_info = tuple(int(v) for v in sqlite_version.split("."))
-
-
-logging.basicConfig(level=logging.DEBUG)
