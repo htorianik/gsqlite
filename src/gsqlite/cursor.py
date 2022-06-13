@@ -9,6 +9,7 @@ from typing import Tuple, Optional, Sequence, Union, TypeVar, List, Iterator
 from .utils import sqlite3_rc_guard
 from .c_sqlite3 import libsqlite3
 from .exceptions import ProgrammingError
+from .description import DescriptionMixin
 from .constants import (
     SQLITE3_TEXT,
     SQLITE_BLOB,
@@ -27,7 +28,6 @@ logger = logging.getLogger(__name__)
 TElem = Union[int, float, str, bytes, None]
 TRow = Sequence[TElem]
 TParams = Sequence[TElem]
-TColDesc = Tuple[str, None, None, None, None, None, None]
 
 
 def bind_param(
@@ -92,7 +92,10 @@ def get_column(statement: ctypes.c_void_p, index: int) -> TElem:
     raise NotImplementedError()
 
 
-class Cursor(Iterator[TRow]):
+class Cursor(
+    Iterator[TRow],
+    DescriptionMixin,
+):
 
     closed: bool = False
     connection: "Connection"
@@ -101,7 +104,6 @@ class Cursor(Iterator[TRow]):
     row_iter: Iterator[TRow]
 
     __connection: "Connection"
-    __description: Optional[Sequence[TColDesc]] = None
     __lastrowid: Optional[int] = None
 
     arraysize: int = 1
@@ -115,18 +117,6 @@ class Cursor(Iterator[TRow]):
         return self.__connection
 
     @property
-    def description(self) -> Sequence[TColDesc]:
-        """
-        Read-only attribute provides column names for
-        the last query. If no query was executed or operation
-        didn't retur any row then the value is `None`.
-
-        For every column it returns 7-row tuple where the
-        first element is a name and the last 6 are empty.
-        """
-        return self.__description
-
-    @property
     def lastrowid(self):
         """
         Read-only attribute provides last id of the
@@ -135,25 +125,6 @@ class Cursor(Iterator[TRow]):
         in setting this attribute to `None`. Initial is `None`.
         """
         return self.__lastrowid
-
-    def __update_description(self, operation: str):
-        column_count = libsqlite3.sqlite3_column_count(
-            self.statement
-        )
-
-        if column_count == 0:
-            self.__description = None
-            return
-
-        column_names = (
-            libsqlite3.sqlite3_column_name(self.statement, n).decode("utf-8")
-            for n in range(column_count)
-        )
-
-        self.__description = tuple(
-            (name, None, None, None, None, None, None)
-            for name in column_names
-        )
 
     def __update_lastrowid(self, operation: str):
         assert operation
@@ -263,7 +234,7 @@ class Cursor(Iterator[TRow]):
         )
         sqlite3_rc_guard(rc)
 
-        self.__update_description(operation)
+        self._update_description(self.statement, operation)
 
     def __finalize(self) -> None:
         self.last_step_rc = None
