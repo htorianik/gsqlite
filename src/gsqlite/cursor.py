@@ -12,6 +12,8 @@ from .c_sqlite3 import libsqlite3
 from .lastrowid import LastrowidMixin
 from .exceptions import ProgrammingError
 from .description import DescriptionMixin
+from .types import *
+from .cursor_iterator import CursorIterator
 from .constants import (
     SQLITE3_TEXT,
     SQLITE_BLOB,
@@ -25,11 +27,6 @@ from .constants import (
 
 
 logger = logging.getLogger(__name__)
-
-
-TElem = Union[int, float, str, bytes, None]
-TRow = Sequence[TElem]
-TParams = Sequence[TElem]
 
 
 def bind_param(
@@ -74,74 +71,6 @@ def bind_param(
 
     sqlite3_rc_guard(rc)
 
-
-def get_column(statement: ctypes.c_void_p, index: int) -> TElem:
-    column_type = libsqlite3.sqlite3_column_type(statement, index)
-
-    if column_type == SQLITE_INTEGER:
-        return libsqlite3.sqlite3_column_int(statement, index)
-
-    if column_type == SQLITE_FLOAT:
-        return libsqlite3.sqlite3_column_double(statement, index)
-
-    if column_type in [SQLITE_TEXT, SQLITE3_TEXT]:
-        libsqlite3.sqlite3_column_text.restype = ctypes.c_char_p
-        return libsqlite3.sqlite3_column_text(statement, index).decode("utf-8")
-
-    if column_type == SQLITE_NULL:
-        return None
-
-    raise NotImplementedError()
-
-
-class CursorIterator(Iterator[TRow]):
-    """
-    Class responsible for executing prepared SQL statement with binded
-    parameters and then fetching results.
-    """
-
-    __statement: ctypes.c_void_p
-    __prev_step_rc: int
-    __data_count: int
-
-    def __init__(
-        self, 
-        statement: ctypes.c_void_p,
-        prev_step_rc: int,
-    ):
-        self.__statement = statement
-        self.__prev_step_rc = prev_step_rc
-        self.__data_count = libsqlite3.sqlite3_data_count(self.__statement)
-
-    @classmethod
-    def exec_and_iter(cls, statement: ctypes.c_void_p) -> "CursorIterator":
-        prev_step_rc = sqlite3_call(libsqlite3.sqlite3_step, statement)
-        return cls(statement, prev_step_rc)
-
-    def __next__(self) -> TRow:
-        if self.__prev_step_rc == SQLITE_DONE:
-            raise StopIteration()
-
-        row = tuple(
-            get_column(self.__statement, index)
-            for index in range(self.__data_count)
-        )
-        self.__prev_step_rc = sqlite3_call(
-            libsqlite3.sqlite3_step, 
-            self.__statement,
-        )
-        return row
-
-
-
-TPostExecutionHook = Callable[
-    [
-        "Connection", 
-        ctypes.c_void_p, 
-        str,
-    ], 
-    None,
-]
 
 
 class CursorExecutionLayer(Iterable[TRow]):
@@ -216,13 +145,6 @@ class CursorExecutionLayer(Iterable[TRow]):
             ctypes.byref(ctypes.c_void_p()),
         )
 
-    def __reset(self):
-        self.__iterator = None
-        sqlite3_call(
-            libsqlite3.sqlite3_reset,
-            self.__statement,
-        )
-
     def __finalize(self) -> None:
         self.__iterator = None
         if self.__statement:
@@ -244,10 +166,10 @@ class CursorFetchLayer(CursorExecutionLayer):
     @arraysize.setter
     def arraysize(self, value: int):
         if not isinstance(value, int):
-            raise TypeError("Attribute arraysize must be int.")
+            raise ProgrammingError("Attribute arraysize must be int.")
 
         if value < 1:
-            raise ValueError("Attribute arraysize must be 1 or more.")
+            raise ProgrammingError("Attribute arraysize must be 1 or more.")
 
         self.__arraysize = value
 
