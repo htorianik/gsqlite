@@ -35,7 +35,6 @@ def users_testset_fixture(self):
     return TEST_USERS
 
 
-
 class TestCursorExecution(TestCase):
 
     def setUp(self):
@@ -73,6 +72,73 @@ class TestCursorExecution(TestCase):
             "executemany() can only execute DML statements.",
             str(context.exception),
         )
+
+
+class TestCursorFetching(TestCase):
+
+    def setUp(self):
+        self.users = users_testset_fixture(self)
+
+    def test_fetchone(self):
+        self.cursor.execute("SELECT * FROM users")
+
+        for i in range(len(self.users)):
+            self.assertEqual(
+                self.cursor.fetchone(),
+                self.users[i],
+            )
+
+        for i in range(3):
+            self.assertIsNone(self.cursor.fetchone())
+
+    def test_fetchall_empty(self):
+        self.assertEqual(len(self.cursor.fetchall()), 0)
+
+    def test_fetchall(self):
+        self.cursor.execute("SELECT * FROM users")
+        self.assertEqual(self.cursor.fetchall(), self.users)
+
+    def test_fetchall_second_is_empty(self):
+        self.cursor.execute("SELECT * FROM users")
+        self.assertEqual(self.cursor.fetchall(), self.users)
+        self.assertEqual(len(self.cursor.fetchall()), 0)
+
+    def test_arraysize_default_is_1(self):
+        self.assertEqual(self.cursor.arraysize, 1)
+
+    def test_arraysize_positive(self):
+        with self.assertRaises(ProgrammingError) as context:
+            self.cursor.arraysize = -1
+
+        self.assertIn(
+            "Attribute arraysize must be 1 or more.",
+            str(context.exception),
+        )
+
+    def test_arraysize_int(self):
+        with self.assertRaises(ProgrammingError) as context:
+            self.cursor.arraysize = 12.3
+
+        self.assertIn(
+            "Attribute arraysize must be int.",
+            str(context.exception),
+        )
+
+    def test_fetchmany_custom_arraysize(self):
+        self.cursor.arraysize = 2
+        self.cursor.execute("SELECT * FROM users")
+
+        self.assertSequenceEqual(
+            self.cursor.fetchmany(),
+            self.users[:2],
+        )
+
+        self.assertSequenceEqual(
+            self.cursor.fetchmany(),
+            self.users[2:],
+        )
+
+        self.assertEqual(len(self.cursor.fetchmany()), 0)
 
 
 class TestCursorDescription(TestCase):
