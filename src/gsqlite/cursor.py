@@ -14,16 +14,6 @@ from .exceptions import ProgrammingError
 from .description import DescriptionMixin
 from .types import *
 from .cursor_iterator import CursorIterator
-from .constants import (
-    SQLITE3_TEXT,
-    SQLITE_BLOB,
-    SQLITE_FLOAT,
-    SQLITE_INTEGER,
-    SQLITE_NULL,
-    SQLITE_TEXT,
-    SQLITE_DONE,
-    SQLITE_ROW,
-)
 
 
 logger = logging.getLogger(__name__)
